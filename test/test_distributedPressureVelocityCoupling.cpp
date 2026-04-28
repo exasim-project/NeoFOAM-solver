@@ -124,10 +124,10 @@ TEST_CASE("Distributed PressureVelocityCoupling")
         auto [nfrAU, nfHbyA] = nf::computeRAUandHByA(nfUEqn);
 
         // FIXME this needs very lose tolerance to pass
-        // SECTION_IF(rt.mpiEnvironment.rank() == 0, "Correct boundaryMesh on rank 0")
-        // {
-        //     nf::compare(nfHbyA, HbyA, ApproxVector({1e-01, 1e-01, 1e-01}), false);
-        // }
+        SECTION_IF(rt.mpiEnvironment.rank() == 0, "Correct boundaryMesh on rank 0")
+        {
+            nf::compare(nfHbyA, HbyA, ApproxVector({1e-01, 1e-01, 1e-01}), false);
+        }
         // SECTION_IF(rt.mpiEnvironment.rank() == 2, "Correct boundaryMesh on rank 2")
         // {
         // nf::compare(nfHbyA, HbyA, ApproxVector({1e-01, 1e-01, 1e-01}), false);
