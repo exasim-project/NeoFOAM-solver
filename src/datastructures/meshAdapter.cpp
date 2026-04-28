@@ -5,6 +5,9 @@
 #include "NeoFOAM/auxiliary/readers.hpp"
 
 
+#include "processorFvPatch.H"
+#include "lduInterfaceField.H"
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 
@@ -37,11 +40,70 @@ std::vector<NeoN::localIdx> computeOffset(const Foam::fvMesh& mesh)
     std::vector<NeoN::localIdx> result;
     const Foam::fvBoundaryMesh& bMesh = mesh.boundary();
     result.push_back(0);
+    // first all regular boundaries are collected
     forAll(bMesh, patchI)
     {
         NeoN::localIdx curOffset = result.back();
         const Foam::fvPatch& patch = bMesh[patchI];
-        result.push_back(curOffset + patch.size());
+        if (!Foam::isA<Foam::processorFvPatch>(patch))
+        {
+            result.push_back(curOffset + patch.size());
+        }
+    }
+    forAll(bMesh, patchI)
+    {
+        NeoN::localIdx curOffset = result.back();
+        const Foam::fvPatch& patch = bMesh[patchI];
+        if (Foam::isA<Foam::processorFvPatch>(patch))
+        {
+            result.push_back(curOffset + patch.size());
+        }
+    }
+    return result;
+}
+
+std::vector<NeoN::localIdx> computeNeighbRank(const Foam::fvMesh& mesh)
+{
+    const Foam::fvBoundaryMesh& bMesh = mesh.boundary();
+    const Foam::lduInterfacePtrsList interfaces = bMesh.interfaces();
+
+    auto result = std::vector<NeoN::localIdx>(); // bMesh.size(), -1);
+
+    for (auto i = 0; i < interfaces.size(); i++)
+    {
+        if (interfaces.get(i) == nullptr)
+        {
+            continue;
+        }
+        if (Foam::isA<Foam::processorFvPatch>(interfaces[i]))
+        {
+            const Foam::processorFvPatch& patch =
+                Foam::refCast<const Foam::processorFvPatch>(interfaces[i]);
+            result.push_back(patch.neighbProcNo());
+        }
+    }
+    return result;
+}
+
+std::vector<std::pair<NeoN::localIdx, NeoN::localIdx>>
+computeNeighbRankAndSize(const Foam::fvMesh& mesh)
+{
+    const Foam::fvBoundaryMesh& bMesh = mesh.boundary();
+    const Foam::lduInterfacePtrsList interfaces = bMesh.interfaces();
+    auto result = std::vector<std::pair<NeoN::localIdx, NeoN::localIdx>>();
+
+    for (auto i = 0; i < interfaces.size(); i++)
+    {
+        if (interfaces.get(i) == nullptr)
+        {
+            continue;
+        }
+        if (Foam::isA<Foam::processorFvPatch>(interfaces[i]))
+        {
+            const Foam::processorFvPatch& patch =
+                Foam::refCast<const Foam::processorFvPatch>(interfaces[i]);
+            result.emplace_back(patch.neighbProcNo(), patch.size());
+        }
     }
     return result;
 }
@@ -56,6 +118,38 @@ int32_t computeNBoundaryFaces(const Foam::fvMesh& mesh)
         nBoundaryFaces += patch.size();
     }
     return nBoundaryFaces;
+}
+
+// FIXME
+NeoN::Vector<NeoN::localIdx> computeIsProc(const NeoN::Executor& exec, const Foam::fvMesh& mesh)
+{
+    const Foam::fvBoundaryMesh& bMesh = mesh.boundary();
+    const Foam::lduInterfacePtrsList interfaces = bMesh.interfaces();
+    NeoN::localIdx nFaces = computeNBoundaryFaces(mesh);
+
+    auto result = std::vector<NeoN::localIdx>(nFaces, 0);
+
+    for (auto i = 0; i < interfaces.size(); i++)
+    {
+        if (interfaces.get(i) == nullptr)
+        {
+            continue;
+        }
+        if (Foam::isA<Foam::processorFvPatch>(interfaces[i]))
+        {
+            const Foam::processorFvPatch& patch =
+                Foam::refCast<const Foam::processorFvPatch>(interfaces[i]);
+            // FIXME -1 for non-owner/owner
+            result[i] = -1;
+        }
+    }
+
+    return NeoN::Vector<NeoN::localIdx>(exec, result);
+}
+
+NeoN::CommunicationPattern createCommunicationPattern(const RunTime& runTime)
+{
+    return NeoN::computeCommunicationPattern(runTime.nfMesh);
 }
 
 NeoN::UnstructuredMesh
@@ -106,7 +200,11 @@ readOpenFOAMMesh(const NeoN::Executor exec, const Foam::fvMesh& mesh, bool fullM
     );
     std::vector<NeoN::localIdx> offset = computeOffset(mesh);
 
+    std::vector<NeoN::localIdx> neighbRank = computeNeighbRank(mesh);
 
+    NeoN::localIdx nProcPatches = neighbRank.size();
+    // auto isProc = computeIsProc(exec, mesh);
+    std::vector<NeoN::localIdx> neighbourRank = computeNeighbRank(mesh);
     NeoN::BoundaryMesh bMesh(
         exec,
         fromFoamField(exec, faceCells),
@@ -118,7 +216,9 @@ readOpenFOAMMesh(const NeoN::Executor exec, const Foam::fvMesh& mesh, bool fullM
         fromFoamField(exec, delta),
         fromFoamField(exec, weights),
         fromFoamField(exec, deltaCoeffs),
-        offset
+        offset,
+        nProcPatches,
+        neighbourRank
     );
 
     NeoN::UnstructuredMesh uMesh(
@@ -130,11 +230,6 @@ readOpenFOAMMesh(const NeoN::Executor exec, const Foam::fvMesh& mesh, bool fullM
         fromFoamField(exec, magFaceAreas),
         fromFoamField(exec, mesh.faceOwner()),
         fromFoamField(exec, mesh.faceNeighbour()),
-        nCells,
-        nInternalFaces,
-        nBoundaryFaces,
-        nBoundaries,
-        nFaces,
         bMesh
     );
 

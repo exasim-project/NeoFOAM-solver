@@ -26,12 +26,11 @@ namespace nf = NeoFOAM;
 
 int main(int argc, char* argv[])
 {
-    NeoN::initialize(argc, argv);
-    {
 #include "addCheckCaseOptions.H"
 #include "setRootCase.H"
 #include "createTime.H"
-
+    NeoN::initialize(argc, argv);
+    {
         auto rt = nf::createAdapterRunTime(runTime);
         auto& mesh = rt.mesh;
 
@@ -59,6 +58,8 @@ int main(int argc, char* argv[])
 
         NeoN::Logging::info("Creating phi");
         auto& phi = nf::constructAndRegister(vectorCollection, rt, ofPhi, false);
+
+        auto commPattern = createCommunicationPattern(rt);
 
         // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
